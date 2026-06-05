@@ -16,12 +16,12 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
 # ============================================================
-# RSS MANBALAR - URL manzillar daryo va kun uchun to'g'rilandi
+# RSS MANBALAR
 # ============================================================
 RSS_SOURCES = [
-    {"name": "Kun.uz",        "url": "https://kun.uz/news/rss"},
+    {"name": "Kun.uz",        "url": "https://kun.uz/rss"},
     {"name": "Gazeta.uz",     "url": "https://www.gazeta.uz/rss/"},
-    {"name": "Daryo.uz",      "url": "https://daryo.uz/rss/"},
+    {"name": "Daryo.uz",      "url": "https://daryo.uz/feed"},
     {"name": "Aniq.uz",       "url": "https://aniq.uz/rss"},
     {"name": "Darakchi.uz",   "url": "https://darakchi.uz/rss"},
     {"name": "Nuz.uz",        "url": "https://nuz.uz/feed"},
@@ -40,14 +40,11 @@ SIMILARITY_THRESHOLD = 0.65  # 65% o'xshash bo'lsa bir xil yangilik deb hisoblan
 def load_sent_news():
     if os.path.exists(SENT_NEWS_FILE):
         with open(SENT_NEWS_FILE, "r") as f:
-            try:
-                return json.load(f)
-            except:
-                return []
+            return json.load(f)
     return []
 
 def save_sent_news(sent_list):
-    # Faqat so'nggi 500 ta yangilik xeshini saqlaydi (Tizim shishib ketmasligi uchun)
+    # Faqat so'nggi 500 ta yangilikni saqlaydi
     with open(SENT_NEWS_FILE, "w") as f:
         json.dump(sent_list[-500:], f)
 
@@ -58,38 +55,26 @@ def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
 # ============================================================
-# RSS DAN YANGILIKLAR O'QISH (KUN.UZ VA DARYO BLOKLARINI OCHISH BILAN)
+# RSS DAN YANGILIKLAR O'QISH
 # ============================================================
 def fetch_all_news():
     all_news = []
-    # Haqiqiy brauzer sarlavhasi (User-Agent) saytlar botni bloklamasligi uchun shart
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
     for source in RSS_SOURCES:
         try:
-            # To'g'ridan-to'g'ri o'qisa ko'p saytlar 403 beradi, shuning uchun requests ishlatamiz
-            response = requests.get(source["url"], headers=headers, timeout=15)
-            if response.status_code == 200:
-                feed = feedparser.parse(response.content)
-                count = 0
-                for entry in feed.entries[:10]:  # Har manbadan max 10 ta
-                    title = entry.get("title", "").strip()
-                    link = entry.get("link", "").strip()
-                    summary = entry.get("summary", entry.get("description", "")).strip()
-                    if title and link:
-                        all_news.append({
-                            "title": title,
-                            "link": link,
-                            "summary": summary[:500] if summary else "",
-                            "source": source["name"],
-                            "hash": get_news_hash(title)
-                        })
-                        count += 1
-                print(f"✅ {source['name']}: {count} yangilik olindi")
-            else:
-                print(f"⚠️ {source['name']} bloklandi yoki ochilmadi (Status code: {response.status_code})")
+            feed = feedparser.parse(source["url"])
+            for entry in feed.entries[:10]:  # Har manbadan max 10 ta
+                title = entry.get("title", "").strip()
+                link = entry.get("link", "").strip()
+                summary = entry.get("summary", entry.get("description", "")).strip()
+                if title and link:
+                    all_news.append({
+                        "title": title,
+                        "link": link,
+                        "summary": summary[:500] if summary else "",
+                        "source": source["name"],
+                        "hash": get_news_hash(title)
+                    })
+            print(f"✅ {source['name']}: {len(feed.entries)} yangilik olindi")
         except Exception as e:
             print(f"❌ {source['name']} xatolik: {e}")
     return all_news
@@ -147,6 +132,7 @@ Xulosa:"""
         return response.text.strip(), sources
     except Exception as e:
         print(f"Gemini xatolik: {e}")
+        # Gemini ishlamasa ham asosiy sarlavhani qaytaradi
         return titles[0], sources
 
 # ============================================================
@@ -154,6 +140,8 @@ Xulosa:"""
 # ============================================================
 def send_to_telegram(summary, sources, links):
     sources_text = "\n".join([f"• {s}" for s in sources])
+    
+    # Asosiy link (birinchi manba)
     main_link = links[0] if links else ""
 
     message = f"""📰 <b>{summary}</b>
@@ -215,27 +203,27 @@ def main():
     print(f"📦 {len(groups)} ta guruh yaratildi\n")
 
     sent_count = 0
-    # Yangi yuboriladigan xeshlar ro'yxati (eskilari yo'qolmasligi uchun yuklab olingani ustiga qo'shamiz)
-    updated_sent_news = list(sent_news)
-
     for group in groups[:10]:  # Bir ishga tushishda max 10 ta yangilik
         try:
+            # AI bilan xulosa yaratish
             summary, sources = generate_summary_with_gemini(group)
             links = [n["link"] for n in group]
 
+            # Telegram ga yuborish
             if send_to_telegram(summary, sources, links):
+                # Yuborilgan yangiliklar ro'yxatini yangilash
                 for n in group:
-                    if n["hash"] not in updated_sent_news:
-                        updated_sent_news.append(n["hash"])
+                    sent_hashes.add(n["hash"])
+                    sent_news.append(n["hash"])
                 sent_count += 1
-                time.sleep(3)
+                time.sleep(3)  # Spam oldini olish uchun 3 soniya kutish
 
         except Exception as e:
             print(f"❌ Xatolik: {e}")
             continue
 
-    # Yangilangan ro'yxatni saqlash
-    save_sent_news(updated_sent_news)
+    # Saqlash
+    save_sent_news(list(sent_hashes))
     print(f"\n✅ Jami {sent_count} ta yangilik yuborildi!")
 
 if __name__ == "__main__":
