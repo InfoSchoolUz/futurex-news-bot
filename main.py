@@ -16,66 +16,80 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
 # ============================================================
-# RSS MANBALAR
+# RSS MANBALAR - BARCHA ASOSIY O'ZBEK SAYTLARI TO'LIQ QO'SHILDI
 # ============================================================
 RSS_SOURCES = [
-    {"name": "Kun.uz",        "url": "https://kun.uz/news/rss"},
-    {"name": "Gazeta.uz",     "url": "https://www.gazeta.uz/rss/"},
-    {"name": "Daryo.uz",      "url": "https://daryo.uz/feed"},
-    {"name": "Aniq.uz",       "url": "https://aniq.uz/rss"},
-    {"name": "Darakchi.uz",   "url": "https://darakchi.uz/rss"},
-    {"name": "Nuz.uz",        "url": "https://nuz.uz/feed"},
-    {"name": "BBC O'zbek",    "url": "https://feeds.bbci.co.uk/uzbek/rss.xml"},
-    {"name": "Ozodlik",       "url": "https://www.ozodlik.org/api/zfpjlvem"},
-    {"name": "Uza.uz",        "url": "https://uza.uz/rss"},
-    {"name": "Xs.uz",         "url": "https://xs.uz/rss"},
+    # 1. Eng yirik mustaqil OAVlar
+    {"name": "Kun.uz",             "url": "https://kun.uz/news/rss"},
+    {"name": "Daryo.uz",           "url": "https://daryo.uz/feed"},
+    {"name": "Gazeta.uz",          "url": "https://www.gazeta.uz/rss/"},
+    {"name": "Qalampir.uz",        "url": "https://qalampir.uz/uz/rss"},
+    {"name": "Aniq.uz",            "url": "https://aniq.uz/rss"},
+    {"name": "Podrobno.uz (uz)",   "url": "https://podrobno.uz/uz/rss.php"},
+    
+    # 2. Xalqaro OAVlarning o'zbek xizmatlari
+    {"name": "BBC O'zbek",         "url": "https://feeds.bbci.co.uk/uzbek/rss.xml"},
+    {"name": "Ozodlik",            "url": "https://www.ozodlik.org/api/zfpjlvem"},
+    {"name": "TRT O'zbekcha",      "url": "https://www.trt.net.tr/uzbek/rss"},
+    {"name": "Sputnik O'zbekiston","url": "https://uz.sputniknews.ru/export/rss2/archive/index.xml"},
+    
+    # 3. Rasmiy va Davlat agentliklari
+    {"name": "Uza.uz",             "url": "https://uza.uz/rss"},
+    {"name": "Xs.uz (Xalq so'zi)", "url": "https://xs.uz/rss"},
+    {"name": "Yuz.uz",             "url": "https://yuz.uz/uz/news/rss"},
+    
+    # 4. Ommabop va ixtisoslashgan nashrlar
+    {"name": "Xabar.uz",           "url": "https://www.xbar.uz/uz/rss"},
+    {"name": "Darakchi.uz",        "url": "https://darakchi.uz/rss"},
+    {"name": "Nuz.uz",             "url": "https://nuz.uz/feed"},
 ]
 
 SENT_NEWS_FILE = "sent_news.json"
-SIMILARITY_THRESHOLD = 0.45  # Turli saytlar har xil so'zlagani uchun o'xshashlik 45% ga moslashtirildi
+SIMILARITY_THRESHOLD = 0.50  # O'xshashlik 50% (Saytlar har xil sarlavha qo'yishi uchun eng maqbul chegara)
 
 # ============================================================
-# YUBORILGAN YANGILIKLAR - DUPLICATE OLDINI OLISH
+# JSON XOTIRA TIZIMI (KESHLASH) - AVTOMATIK FAYL YARATADI
 # ============================================================
 def load_sent_news():
+    """Fayldan avval yuborilgan yangiliklar ro'yxatini yuklaydi"""
     if os.path.exists(SENT_NEWS_FILE):
-        with open(SENT_NEWS_FILE, "r") as f:
+        with open(SENT_NEWS_FILE, "r", encoding="utf-8") as f:
             try:
-                return json.load(f)
-            except:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+            except Exception:
                 return []
     return []
 
 def save_sent_news(sent_list):
-    # Ro'yxat takrorlanmasligini ta'minlab, oxirgi 500 tasini saqlaydi
+    """Yuborilgan yangiliklarni JSON fayliga xavfsiz saqlaydi"""
     unique_list = list(set(sent_list))
-    with open(SENT_NEWS_FILE, "w") as f:
-        json.dump(unique_list[-500:], f)
+    with open(SENT_NEWS_FILE, "w", encoding="utf-8") as f:
+        json.dump(unique_list[-500:], f, ensure_ascii=False, indent=2)
 
 def get_news_hash(title):
-    return hashlib.md5(title.lower().strip().encode()).hexdigest()
+    return hashlib.md5(title.lower().strip().encode('utf-8')).hexdigest()
 
 def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
 # ============================================================
-# RSS DAN YANGILIKLAR O'QISH
+# RSS DAN YANGILIKLAR O'QISH (SOXTA BRAUZER BILAN BLOKDAN O'TISH)
 # ============================================================
 def fetch_all_news():
     all_news = []
-    # Kun.uz va Daryo.uz botlarni bloklamasligi uchun soxta brauzer sarlavhasi
+    # Saytlar bot xavfsizlik tizimiga (Cloudflare) tushib qolmasligi uchun User-Agent
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     for source in RSS_SOURCES:
         try:
-            # To'g'ridan-to'g'ri feedparser o'rniga requests yordamida blokdan o'tamiz
             response = requests.get(source["url"], headers=headers, timeout=15)
             if response.status_code == 200:
                 feed = feedparser.parse(response.content)
                 count = 0
-                for entry in feed.entries[:10]:  # Har manbadan max 10 ta
+                for entry in feed.entries[:10]:  # Har manbadan max 10 ta eng yangisi
                     title = entry.get("title", "").strip()
                     link = entry.get("link", "").strip()
                     summary = entry.get("summary", entry.get("description", "")).strip()
@@ -151,9 +165,10 @@ Xulosa:"""
         return titles[0], sources
 
 # ============================================================
-# TELEGRAM GA XABAR YUBORISH
+# TELEGRAM GA XABAR YUBORISH (KO'P MANBALI FORMAT)
 # ============================================================
 def send_to_telegram(summary, sources, links):
+    # Guruhga kirgan barcha manbalarni chiroyli ro'yxat qilish
     sources_text = "\n".join([f"• {s}" for s in sources])
     main_link = links[0] if links else ""
 
@@ -195,14 +210,14 @@ def main():
     print(f"⏰ Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}\n")
 
-    # Yuborilgan yangiliklar ro'yxatini yuklash
+    # JSON fayldan avval yuborilgan xabarlar keshini o'qish
     sent_news = load_sent_news()
 
-    # Barcha manbalardan yangilik olish
+    # 1. Barcha manbalardan yangilik olish
     all_news = fetch_all_news()
     print(f"\n📊 Jami {len(all_news)} ta yangilik olindi\n")
 
-    # Yangi (yuborilmagan) yangiliklar
+    # 2. Yangi (ilgari yuborilmagan) yangiliklarni saralash
     new_news = [n for n in all_news if n["hash"] not in sent_news]
     print(f"🆕 {len(new_news)} ta yangi yangilik topildi\n")
 
@@ -210,32 +225,32 @@ def main():
         print("ℹ️ Yangi yangilik yo'q")
         return
 
-    # Bir xil yangiliklarni birlashtirish
+    # 3. Bir xil yangiliklarni guruhlash (Birlashtirish)
     groups = group_similar_news(new_news)
     print(f"📦 {len(groups)} ta guruh yaratildi\n")
 
     sent_count = 0
-    for group in groups[:10]:  # Bir ishga tushishda max 10 ta yangilik
+    for group in groups[:10]:  # Bir ishga tushishda ko'pida 10 ta post yuborish
         try:
-            # AI bilan xulosa yaratish
+            # AI orqali umumiy xulosa va barcha manbalar nomini olish
             summary, sources = generate_summary_with_gemini(group)
             links = [n["link"] for n in group]
 
             # Telegram ga yuborish
             if send_to_telegram(summary, sources, links):
-                # Yuborilgan ro'yxatni yangilash
+                # Guruhga birlashgan barcha yangiliklarni yuborildi deb keshga yozish
                 for n in group:
                     sent_news.append(n["hash"])
                 sent_count += 1
-                time.sleep(3)
+                time.sleep(3)  # Telegram spam cheklovi uchun
 
         except Exception as e:
             print(f"❌ Xatolik: {e}")
             continue
 
-    # TO'G'RILANDI: `sent_news` to'liq kesh fayliga yoziladi
+    # 4. Keshni saqlash (Agar fayl bo'lmasa o'zi yaratadi)
     save_sent_news(sent_news)
-    print(f"\n✅ Jami {sent_count} ta yangilik yuborildi!")
+    print(f"\n✅ Jami {sent_count} ta birlashtirilgan yangilik yuborildi!")
 
 if __name__ == "__main__":
     main()
