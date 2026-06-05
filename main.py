@@ -5,45 +5,29 @@ import json
 import os
 import hashlib
 import time
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher
 
 # ============================================================
-# TIZIM SOZLAMALARI
+# KONFIGURATSIYA
 # ============================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
-# ============================================================
-# ISHONCHLI XALQARO MANBALAR (INGLIZ VA RUS TILLARIDA)
-# ============================================================
-RSS_SOURCES = [
-    # 1. Komponentlar, platalar va mikrosxemalar (Mikro-daraja)
-    {"name": "Arduino Robotics",         "url": "https://blog.arduino.cc/category/robotics/feed/"},
-    {"name": "Raspberry Pi Foundation",  "url": "https://www.raspberrypi.org/feed/"},
-    
-    # 2. Gumanoid robotlar va Jismoniy AI (Neo, Atlas, Optimus)
-    {"name": "1X Technologies (NEO)",   "url": "https://www.1x.tech/blog/rss.xml"},
-    {"name": "Boston Dynamics",          "url": "https://bostondynamics.com/feed/"},
-    {"name": "Agility Robotics (Digit)", "url": "https://www.agilityrobotics.com/news/rss.xml"},
-    
-    # 3. Sanoat avtomatizatsiyasi va Laboratoriyalar
-    {"name": "MIT Robotics Lab",         "url": "https://biomimeticrobotics.mit.edu/feed"},
-    {"name": "IEEE Spectrum Robotics",   "url": "https://spectrum.ieee.org/feeds/robotics.xml"},
-    {"name": "Habr Robotics (Ruscha)",   "url": "https://habr.com/ru/rss/hub/robot/all/?fl=ru"},
-    
-    # 4. Kosmik AI va Avtonom Tizimlar (Makro-daraja)
-    {"name": "NASA News Releases",       "url": "https://www.nasa.gov/news-release/feed/"},
-    {"name": "ESA Space Science",        "url": "https://www.esa.int/rssfeed/Our_Activities/Space_Science"}
-]
-
+SOURCES_FILE = "sources.json"
 SENT_NEWS_FILE = "sent_news.json"
-SIMILARITY_THRESHOLD = 0.55 
+SIMILARITY_THRESHOLD = 0.55
 
 # ============================================================
-# KESH TIZIMI (JSON)
+# KESH VA MANBALARNI YUKLASH
 # ============================================================
+def load_sources():
+    if os.path.exists(SOURCES_FILE):
+        with open(SOURCES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
 def load_sent_news():
     if os.path.exists(SENT_NEWS_FILE):
         with open(SENT_NEWS_FILE, "r", encoding="utf-8") as f:
@@ -57,7 +41,7 @@ def load_sent_news():
 def save_sent_news(sent_list):
     unique_list = list(set(sent_list))
     with open(SENT_NEWS_FILE, "w", encoding="utf-8") as f:
-        json.dump(unique_list[-500:], f, ensure_ascii=False, indent=2)
+        json.dump(unique_list[-1000:], f, ensure_ascii=False, indent=2)
 
 def get_news_hash(title):
     return hashlib.md5(title.lower().strip().encode('utf-8')).hexdigest()
@@ -66,38 +50,38 @@ def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
 # ============================================================
-# SKANER ENGINE
+# PARALLEL SKANER TIZIMI (KATTA STRUKTURA UCHUN)
 # ============================================================
-def fetch_all_news():
+def fetch_single_source(source):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    news_items = []
+    try:
+        response = requests.get(source["url"], headers=headers, timeout=10)
+        if response.status_code == 200:
+            feed = feedparser.parse(response.content)
+            for entry in feed.entries[:8]:  # Har bir saytdan eng yangi 8 tasi
+                title = entry.get("title", "").strip()
+                link = entry.get("link", "").strip()
+                summary = entry.get("summary", entry.get("description", "")).strip()
+                if title and link:
+                    news_items.append({
+                        "title": title,
+                        "link": link,
+                        "summary": summary[:600] if summary else "",
+                        "source": source["name"],
+                        "hash": get_news_hash(title)
+                    })
+    except Exception:
+        pass  # Nosoz saytlar butun tizimni to'xtatib qo'ymaydi
+    return news_items
+
+def fetch_all_sources_parallel(sources):
     all_news = []
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-    
-    for source in RSS_SOURCES:
-        try:
-            response = requests.get(source["url"], headers=headers, timeout=15)
-            if response.status_code == 200:
-                feed = feedparser.parse(response.content)
-                count = 0
-                for entry in feed.entries[:12]:
-                    title = entry.get("title", "").strip()
-                    link = entry.get("link", "").strip()
-                    summary = entry.get("summary", entry.get("description", "")).strip()
-                    if title and link:
-                        all_news.append({
-                            "title": title,
-                            "link": link,
-                            "summary": summary[:700] if summary else "",
-                            "source": source["name"],
-                            "hash": get_news_hash(title)
-                        })
-                        count += 1
-                print(f"✅ {source['name']}: {count} ta ma'lumot yuklandi.")
-            else:
-                print(f"⚠️ {source['name']} (Status kod: {response.status_code})")
-        except Exception as e:
-            print(f"❌ {source['name']} ulanishda xatolik: {e}")
+    # 20 ta parallel potokda ishlash (100+ saytni bir necha soniyada yig'adi)
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(fetch_single_source, src): src for src in sources}
+        for future in as_completed(futures):
+            all_news.extend(future.result())
     return all_news
 
 def group_similar_news(news_list):
@@ -118,7 +102,7 @@ def group_similar_news(news_list):
     return groups
 
 # ============================================================
-# GEMINI AI - SOF O'ZBEK TILIDAGI TAHLIL (BO'RTTIRISHLARSIZ)
+# GEMINI AI - SOF MUHANDISLIK SŪZGICHI (BO'RTTIRISHLARSIZ)
 # ============================================================
 def generate_summary_with_gemini(news_group):
     genai.configure(api_key=GEMINI_API_KEY)
@@ -128,39 +112,35 @@ def generate_summary_with_gemini(news_group):
     summaries = [n["summary"] for n in news_group if n["summary"]]
     sources = list(set([n["source"] for n in news_group]))
 
-    prompt = f"""You are an expert, realistic, and highly accurate technical analysis system for the 'FutureX' channel.
-Your task is to analyze the following news articles (which may be in English or Russian) and determine if they are strictly related to:
-1. Microelectronics/components for hardware (Arduino, Raspberry Pi, chips, sensory systems).
-2. Advanced robotics, embodiments, cybernetics, and humanoids (NEO, Atlas, Digit, industry automation).
-3. Space technology integrated with Artificial Intelligence, autonomous space probes, rovers, orbital AI data crunching.
+    prompt = f"""You are an advanced AI data aggregation engine for the high-tech science channel 'FutureX'.
+Analyze the following multi-language titles and snippets to find deep tech, robotics, or space AI content.
 
-Input Materials:
+Input Stream:
 Titles:
 {chr(10).join(f'- {t}' for t in titles)}
 
 Summaries:
-{chr(10).join(f'- {s}' for s in summaries[:3])}
+{chr(10).join(f'- {s}' for s in summaries[:2])}
 
-STRICT INSTRUCTIONS:
-1. Filter out general software, politics, regular consumer gadgets (like smartphones or laptops), or standard economy news. If it doesn't fit the themes above, reply with exactly one word: SKIP
-2. If it fits, generate an engineering-grade, objective summary in pure UZBEK language (2-3 sentences maximum).
-3. STRICT RULE: DO NOT EXAGGERATE. Avoid hype phrases like "this will change the world forever", "mindblowing", "revolutionary breakthrough", "dunyoni zabt etadi". Keep it strictly factual, professional, and clear.
-4. Output only the Uzbek summary or the word SKIP. No introductory or meta-text.
+Strict Processing Protocols:
+1. Topic Validation: The news MUST be about either: microelectronics/hardware components (like Arduino, custom silicon, sensory controllers), advanced bipedal or physical robotics (like NEO, Optimus, Boston Dynamics), industrial automated physical networks, or space science utilizing Artificial Intelligence / autonomous navigation systems.
+2. If it does NOT strictly match, or if it is general gadget hype, software apps, or economic news, reply with EXACTLY: SKIP
+3. Language and Tone: Write a professional, data-driven analytical summary in pure UZBEK language (2-3 sentences max).
+4. ANTI-HYPE RULE: Avoid emotional exaggeration or clickbait. Do not use phrases like "hayratlanarli", "inqilobiy", "dunyoni ag'darib tashlaydi". State only factual achievements, specs, or empirical metrics.
 
 Uzbek Summary (or SKIP):"""
 
     try:
         response = model.generate_content(prompt)
         return response.text.strip(), sources
-    except Exception as e:
-        print(f"Gemini tahlil xatoligi: {e}")
+    except Exception:
         return "SKIP", sources
 
 # ============================================================
-# TELEGRAM FORMAT
+# TELEGRAM DISPATCHER
 # ============================================================
 def send_to_telegram(summary, sources, links):
-    sources_text = ", ".join([s for s in sources])
+    sources_text = ", ".join(sources)
     main_link = links[0] if links else ""
 
     message = f"""⚡️ <b>FUTUREX | Robotics & Deep Tech Intelligence</b>
@@ -170,65 +150,59 @@ def send_to_telegram(summary, sources, links):
 🌐 <b>Global Intel:</b> {sources_text}
 🔗 <a href="{main_link}">Tafsilotlar (Manba) →</a>
 
-🤖 <code>[FutureX Engine v2.5 // Autopilot Mode]</code>"""
+🤖 <code>[FutureX Engine v3.0 // Autonomous Mass-Aggregation]</code>"""
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHANNEL_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
-
+    payload = {"chat_id": TELEGRAM_CHANNEL_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": False}
     try:
-        response = requests.post(url, json=payload)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"❌ Telegramga jo'natishda xatolik: {e}")
+        res = requests.post(url, json=payload)
+        return res.status_code == 200
+    except Exception:
         return False
 
 # ============================================================
-# ASOSIY ISHGA TUSHIRISH TIZIMI
+# MAIN CORE
 # ============================================================
 def main():
-    print(f"\n⚡️ FutureX Core Engine v2.5 yuklanmoqda...")
+    print("⚡️ FutureX Core v3.0: Mass-Aggregation Engine initiated...")
     
+    sources = load_sources()
+    if not sources:
+        print("❌ Error: sources.json fayli bo'sh yoki topilmadi!")
+        return
+
     sent_news = load_sent_news()
-    all_news = fetch_all_news()
+    print(f"Skanerlanayotgan manbalar soni: {len(sources)}")
     
+    all_news = fetch_all_sources_parallel(sources)
     new_news = [n for n in all_news if n["hash"] not in sent_news]
-    print(f"Jami yig'ildi: {len(all_news)} ta xabar. Shulardan yangi: {len(new_news)} ta.")
+    print(f"Jami ma'lumotlar oqimi: {len(all_news)} ta xabar. Yangi oqimlar: {len(new_news)} ta.")
 
     if not new_news:
-        print("Yangi ma'lumotlar oqimi mavjud emas.")
+        print("Yangi axborot datchiklari aniqlanmadi.")
         return
 
     groups = group_similar_news(new_news)
     sent_count = 0
 
-    for group in groups[:8]: # Har bir siklda ko'pi bilan 8 ta saralangan post
-        try:
-            summary, sources = generate_summary_with_gemini(group)
-            
-            if summary.upper() == "SKIP" or len(summary) < 10:
-                for n in group:
-                    sent_news.append(n["hash"])
-                continue
-
-            links = [n["link"] for n in group]
-            if send_to_telegram(summary, sources, links):
-                for n in group:
-                    sent_news.append(n["hash"])
-                sent_count += 1
-                print(f"🚀 FutureX kanaliga yangi xabar joylandi!")
-                time.sleep(5) # Telegram limitlaridan himoya
-
-        except Exception as e:
-            print(f"Blokni qayta ishlashda xatolik: {e}")
+    for group in groups[:10]:  # Har bir aylanishda maksimal 10 ta eng muhim guruhlangan xabar
+        summary, sources_used = generate_summary_with_gemini(group)
+        
+        if summary.upper() == "SKIP" or len(summary) < 15:
+            for n in group:
+                sent_news.append(n["hash"])
             continue
 
+        links = [n["link"] for n in group]
+        if send_to_telegram(summary, sources_used, links):
+            for n in group:
+                sent_news.append(n["hash"])
+            sent_count += 1
+            print(f"🚀 Kanalga joylandi: {sources_used}")
+            time.sleep(4)
+
     save_sent_news(sent_news)
-    print(f"🤖 Ish yakunlandi. Kanalga {sent_count} ta eng sara muhandislik yangiligi o'zbek tilida chiqarildi.")
+    print(f"🤖 Sikl yakunlandi. FutureX kanaliga {sent_count} ta yangilik uzatildi.")
 
 if __name__ == "__main__":
     main()
