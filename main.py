@@ -16,8 +16,8 @@ TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
 RSS_SOURCES = [
     {"name": "Kun.uz",        "url": "https://kun.uz/news/rss"},
-    {"name": "Gazeta.uz",     "url": "https://www.gazeta.uz/uz/rss/"}, # URL aniqlashtirildi
-    {"name": "Daryo.uz",      "url": "https://daryo.uz/rss/"},         # URL aniqlashtirildi
+    {"name": "Gazeta.uz",     "url": "https://www.gazeta.uz/uz/rss/"},
+    {"name": "Daryo.uz",      "url": "https://daryo.uz/rss/"},
     {"name": "Aniq.uz",       "url": "https://aniq.uz/rss"},
     {"name": "Darakchi.uz",   "url": "https://darakchi.uz/rss"},
     {"name": "Nuz.uz",        "url": "https://nuz.uz/feed"},
@@ -46,23 +46,21 @@ def get_news_hash(title):
     return hashlib.md5(title.lower().strip().encode()).hexdigest()
 
 # ============================================================
-# RSS DAN YANGILIKLAR O'QISH (BLOKDAN AYLANIB O'TISH BILAN)
+# RSS DAN YANGILIKLAR O'QISH
 # ============================================================
 def fetch_all_news():
     all_news = []
-    # Haqiqiy brauzer sarlavhasi (User-Agent) Kun.uz va Daryo.uz blokini ochadi
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     for source in RSS_SOURCES:
         try:
-            # feedparser o'rniga requests bilan kontent yuklanadi
             response = requests.get(source["url"], headers=headers, timeout=15)
             if response.status_code == 200:
                 feed = feedparser.parse(response.content)
                 count = 0
-                for entry in feed.entries[:8]:  # Har manbadan max 8 ta
+                for entry in feed.entries[:8]:
                     title = entry.get("title", "").strip()
                     link = entry.get("link", "").strip()
                     summary = entry.get("summary", entry.get("description", "")).strip()
@@ -85,18 +83,12 @@ def fetch_all_news():
     return all_news
 
 # ============================================================
-# GEMINI AI BILAN KLASTERLASH VA XULOSA QILISH
+# GEMINI AI BILAN KLASTERLASH (ESKI VERSIYALARGA MOSLANGAN)
 # ============================================================
 def process_news_with_gemini(new_news_list):
-    """
-    Barcha yangiliklarni Gemini AI ga yuboradi. 
-    Gemini o'xshashlarini bitta qiladi va tayyor JSON formatda qaytaradi.
-    """
     genai.configure(api_key=GEMINI_API_KEY)
-    # Eng so'nggi va barqaror model
-    model = genai.GenerativeModel("gemini-2.0-flash", generation_config={"response_mime_type": "application/json"})
+    model = genai.GenerativeModel("gemini-1.5-flash") # 1.5-flash eski kutubxonada barqaror ishlaydi
 
-    # AI ga yuborish uchun ixcham matn tayyorlash
     input_data = []
     for i, n in enumerate(new_news_list):
         input_data.append({
@@ -110,19 +102,19 @@ def process_news_with_gemini(new_news_list):
     prompt = f"""
 Senga O'zbekiston OAVlaridan olingan yangiliklar ro'yxati berilmoqda.
 Vazifang:
-1. Yangiliklarni tahlil qil va bir xil voqea/hodisaga tegishli o'xshash yangiliklarni bitta guruhga birlashtir (Klasterlash).
-2. Har bir guruh uchun o'zbek tilida qisqa, tushunarli, jozibali sarlavha va 2-3 jumlali umumiy neytral xulosa (summary) yoz.
-3. Guruhga kirgan barcha manbalar nomi (sources) va havolalarini (links) ro'yxatga saqlang.
-4. Agar biror yangilikka o'xshash boshqa xabar bo'lmasa, uni alohida guruh qilib chiqaring.
+1. Bir xil voqeaga tegishli o'xshash yangiliklarni bitta guruhga birlashtir.
+2. Har bir guruh uchun o'zbek tilida qisqa sarlavha va 2-3 jumlali umumiy xulosa yoz.
+3. Guruhga kirgan barcha manbalar nomi va havolalarini yig'.
 
-Natijani FAQAT mana shu JSON strukturada qaytar:
+Javobni FAQAT va FAQAT quyidagi JSON formatida qaytar. Matn ichida hech qanday Markdown belgilari (masalan ```json) bo'lmasin. Faqat toza JSON ob'ekti bo'lsin:
+
 {{
   "news_groups": [
     {{
-      "ai_title": "Birlashtirilgan jozibali sarlavha",
-      "ai_summary": "Barcha manbalardan yig'ilgan voqeaning qisqa va aniq 2-3 jumlali xulosasi.",
+      "ai_title": "Birlashtirilgan sarlavha",
+      "ai_summary": "Voqeaning qisqa xulosasi.",
       "sources": ["Kun.uz", "Daryo.uz"],
-      "links": ["https://...", "https://..."],
+      "links": ["https://link1", "https://link2"],
       "matched_ids": [0, 3]
     }}
   ]
@@ -134,20 +126,25 @@ Yangiliklar ro'yxati:
 
     try:
         response = model.generate_content(prompt)
-        result = json.loads(response.text)
+        text_response = response.text.strip()
+        
+        # Agarda AI baribir 
+```json yozib yuboradigan bo'lsa, uni tozalash mantiqi
+        if text_response.startswith("```"):
+            text_response = text_response.strip("
+```").strip("json").strip()
+            
+        result = json.loads(text_response)
         return result.get("news_groups", [])
     except Exception as e:
-        print(f"❌ Gemini tahlilida xatolik: {e}")
+        print(f"❌ Gemini tahlilida xatolik yoki JSON formatlash xatosi: {e}")
         return []
 
 # ============================================================
 # TELEGRAM GA XABAR YUBORISH
 # ============================================================
 def send_to_telegram(title, summary, sources, links):
-    # Manbalarni teglarga o'girish, masalan: #Kun_uz #Daryo_uz
     formatted_sources = " ".join([f"#{s.replace('.', '_').replace(' ', '_')}" for s in sources])
-    
-    # Birinchi manbani asosiy havola qilib ko'rsatish
     main_link = links[0] if links else "#"
 
     message = f"""📌 <b>{title}</b>
@@ -179,18 +176,16 @@ def send_to_telegram(title, summary, sources, links):
 # ASOSIY FUNKSIYA
 # ============================================================
 def main():
-    print(f"\n🚀 FutureX News Aggregator v2 (AI Clustering) ishga tushdi...")
+    print(f"\n🚀 FutureX News Aggregator v2.1 ishga tushdi...")
     
     sent_news = load_sent_news()
     sent_hashes = set(sent_news)
 
-    # 1. Yangiliklarni yig'ish
     all_news = fetch_all_news()
     if not all_news:
         print("ℹ️ Hech qanday yangilik topilmadi.")
         return
 
-    # 2. Faqat yangilarini ajratib olish
     new_news = [n for n in all_news if n["hash"] not in sent_hashes]
     print(f"🆕 {len(new_news)} ta yangi xabarlar qayta ishlanmoqda...")
 
@@ -198,15 +193,13 @@ def main():
         print("ℹ️ Yangi xabarlar yo'q.")
         return
 
-    # 3. Gemini orqali o'xshashlarini guruhlash va xulosalash
     print("🧠 Gemini AI o'xshash yangiliklarni klasterlamoqda...")
     news_groups = process_news_with_gemini(new_news)
     
     sent_count = 0
     processed_hashes = set()
 
-    # 4. Telegramga chiqarish
-    for group in news_groups[:10]: # Bitta ishlashda max 10 ta post
+    for group in news_groups[:10]:
         title = group.get("ai_title")
         summary = group.get("ai_summary")
         sources = group.get("sources", [])
@@ -216,13 +209,11 @@ def main():
         if title and summary:
             if send_to_telegram(title, summary, sources, links):
                 sent_count += 1
-                # Guruh ichidagi barcha original yangiliklarni yuborilgan deb belgilash
                 for idx in matched_ids:
                     if idx < len(new_news):
                         processed_hashes.add(new_news[idx]["hash"])
-                time.sleep(3) # Telegram spam-filtrdan himoya
+                time.sleep(3)
 
-    # Yuborilganlarni saqlash
     new_sent_list = sent_news + list(processed_hashes)
     save_sent_news(new_sent_list)
     
