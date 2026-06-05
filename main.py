@@ -19,7 +19,7 @@ TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 # RSS MANBALAR
 # ============================================================
 RSS_SOURCES = [
-    {"name": "Kun.uz",        "url": "https://kun.uz/rss"},
+    {"name": "Kun.uz",        "url": "https://kun.uz/news/rss"},
     {"name": "Gazeta.uz",     "url": "https://www.gazeta.uz/rss/"},
     {"name": "Daryo.uz",      "url": "https://daryo.uz/feed"},
     {"name": "Aniq.uz",       "url": "https://aniq.uz/rss"},
@@ -32,7 +32,7 @@ RSS_SOURCES = [
 ]
 
 SENT_NEWS_FILE = "sent_news.json"
-SIMILARITY_THRESHOLD = 0.65  # 65% o'xshash bo'lsa bir xil yangilik deb hisoblanadi
+SIMILARITY_THRESHOLD = 0.45  # Turli saytlar har xil so'zlagani uchun o'xshashlik 45% ga moslashtirildi
 
 # ============================================================
 # YUBORILGAN YANGILIKLAR - DUPLICATE OLDINI OLISH
@@ -40,13 +40,17 @@ SIMILARITY_THRESHOLD = 0.65  # 65% o'xshash bo'lsa bir xil yangilik deb hisoblan
 def load_sent_news():
     if os.path.exists(SENT_NEWS_FILE):
         with open(SENT_NEWS_FILE, "r") as f:
-            return json.load(f)
+            try:
+                return json.load(f)
+            except:
+                return []
     return []
 
 def save_sent_news(sent_list):
-    # Faqat so'nggi 500 ta yangilikni saqlaydi
+    # Ro'yxat takrorlanmasligini ta'minlab, oxirgi 500 tasini saqlaydi
+    unique_list = list(set(sent_list))
     with open(SENT_NEWS_FILE, "w") as f:
-        json.dump(sent_list[-500:], f)
+        json.dump(unique_list[-500:], f)
 
 def get_news_hash(title):
     return hashlib.md5(title.lower().strip().encode()).hexdigest()
@@ -59,22 +63,34 @@ def is_similar(title1, title2):
 # ============================================================
 def fetch_all_news():
     all_news = []
+    # Kun.uz va Daryo.uz botlarni bloklamasligi uchun soxta brauzer sarlavhasi
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
     for source in RSS_SOURCES:
         try:
-            feed = feedparser.parse(source["url"])
-            for entry in feed.entries[:10]:  # Har manbadan max 10 ta
-                title = entry.get("title", "").strip()
-                link = entry.get("link", "").strip()
-                summary = entry.get("summary", entry.get("description", "")).strip()
-                if title and link:
-                    all_news.append({
-                        "title": title,
-                        "link": link,
-                        "summary": summary[:500] if summary else "",
-                        "source": source["name"],
-                        "hash": get_news_hash(title)
-                    })
-            print(f"✅ {source['name']}: {len(feed.entries)} yangilik olindi")
+            # To'g'ridan-to'g'ri feedparser o'rniga requests yordamida blokdan o'tamiz
+            response = requests.get(source["url"], headers=headers, timeout=15)
+            if response.status_code == 200:
+                feed = feedparser.parse(response.content)
+                count = 0
+                for entry in feed.entries[:10]:  # Har manbadan max 10 ta
+                    title = entry.get("title", "").strip()
+                    link = entry.get("link", "").strip()
+                    summary = entry.get("summary", entry.get("description", "")).strip()
+                    if title and link:
+                        all_news.append({
+                            "title": title,
+                            "link": link,
+                            "summary": summary[:500] if summary else "",
+                            "source": source["name"],
+                            "hash": get_news_hash(title)
+                        })
+                        count += 1
+                print(f"✅ {source['name']}: {count} yangilik olindi")
+            else:
+                print(f"⚠️ {source['name']} yuklanmadi (Status: {response.status_code})")
         except Exception as e:
             print(f"❌ {source['name']} xatolik: {e}")
     return all_news
@@ -132,7 +148,6 @@ Xulosa:"""
         return response.text.strip(), sources
     except Exception as e:
         print(f"Gemini xatolik: {e}")
-        # Gemini ishlamasa ham asosiy sarlavhani qaytaradi
         return titles[0], sources
 
 # ============================================================
@@ -140,8 +155,6 @@ Xulosa:"""
 # ============================================================
 def send_to_telegram(summary, sources, links):
     sources_text = "\n".join([f"• {s}" for s in sources])
-    
-    # Asosiy link (birinchi manba)
     main_link = links[0] if links else ""
 
     message = f"""📰 <b>{summary}</b>
@@ -184,14 +197,13 @@ def main():
 
     # Yuborilgan yangiliklar ro'yxatini yuklash
     sent_news = load_sent_news()
-    sent_hashes = set(sent_news)
 
     # Barcha manbalardan yangilik olish
     all_news = fetch_all_news()
     print(f"\n📊 Jami {len(all_news)} ta yangilik olindi\n")
 
     # Yangi (yuborilmagan) yangiliklar
-    new_news = [n for n in all_news if n["hash"] not in sent_hashes]
+    new_news = [n for n in all_news if n["hash"] not in sent_news]
     print(f"🆕 {len(new_news)} ta yangi yangilik topildi\n")
 
     if not new_news:
@@ -211,19 +223,18 @@ def main():
 
             # Telegram ga yuborish
             if send_to_telegram(summary, sources, links):
-                # Yuborilgan yangiliklar ro'yxatini yangilash
+                # Yuborilgan ro'yxatni yangilash
                 for n in group:
-                    sent_hashes.add(n["hash"])
                     sent_news.append(n["hash"])
                 sent_count += 1
-                time.sleep(3)  # Spam oldini olish uchun 3 soniya kutish
+                time.sleep(3)
 
         except Exception as e:
             print(f"❌ Xatolik: {e}")
             continue
 
-    # Saqlash
-    save_sent_news(list(sent_hashes))
+    # TO'G'RILANDI: `sent_news` to'liq kesh fayliga yoziladi
+    save_sent_news(sent_news)
     print(f"\n✅ Jami {sent_count} ta yangilik yuborildi!")
 
 if __name__ == "__main__":
