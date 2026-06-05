@@ -1,0 +1,16 @@
+[
+  {"name": "1X Technologies (NEO)", "url": "https://www.1x.tech/blog/rss.xml"},
+  {"name": "Boston Dynamics", "url": "https://bostondynamics.com/feed/"},
+  {"name": "Agility Robotics", "url": "https://www.agilityrobotics.com/news/rss.xml"},
+  {"name": "Arduino Corporate", "url": "https://blog.arduino.cc/category/robotics/feed/"},
+  {"name": "Raspberry Pi Automation", "url": "https://www.raspberrypi.org/feed/"},
+  {"name": "MIT Robotics Lab", "url": "https://biomimeticrobotics.mit.edu/feed"},
+  {"name": "IEEE Spectrum Automation", "url": "https://spectrum.ieee.org/feeds/robotics.xml"},
+  {"name": "NASA Deep Space", "url": "https://www.nasa.gov/news-release/feed/"},
+  {"name": "ESA Cosmic Systems", "url": "https://www.esa.int/rssfeed/Our_Activities/Space_Science"},
+  {"name": "Habr Robotics & AI", "url": "https://habr.com/ru/rss/hub/robot/all/?fl=ru"},
+  {"name": "TechCrunch DeepTech", "url": "https://techcrunch.com/category/robotics/feed/"},
+  {"name": "Wired Science", "url": "https://www.wired.com/feed/category/science/latest/rss"},
+  {"name": "Robotics Tomorrow", "url": "https://news.roboticstomorrow.com/rss/news.xml"},
+  {"name": "ScienceDaily Robotics", "url": "https://www.sciencedaily.com/rss/computers_math/robotics.xml"}
+]
