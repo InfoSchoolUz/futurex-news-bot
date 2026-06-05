@@ -1,0 +1,44 @@
+name: FutureX News Aggregator
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # Har 30 daqiqada ishga tushadi
+  workflow_dispatch:          # Qo'lda ham ishlatish mumkin
+
+jobs:
+  run-aggregator:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodni yuklab olish
+        uses: actions/checkout@v4
+
+      - name: Python o'rnatish
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Kutubxonalarni o'rnatish
+        run: pip install -r requirements.txt
+
+      - name: Yuborilgan yangiliklar faylini yuklash (cache)
+        uses: actions/cache@v4
+        with:
+          path: sent_news.json
+          key: sent-news-cache-${{ github.run_id }}
+          restore-keys: |
+            sent-news-cache-
+
+      - name: Aggregatorni ishga tushirish
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+        run: python main.py
+
+      - name: Yangiliklar faylini saqlash
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: sent_news.json
+          key: sent-news-cache-${{ github.run_id }}
