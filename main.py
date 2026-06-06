@@ -46,30 +46,44 @@ def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
 def escape_html(text):
+    if not text:
+        return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def fetch_all_news():
     all_news = []
+    # GitHub Actions Cloudflare blokirovkasidan o'tish uchun haqiqiy brauzer sarlavhasi
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     for source in RSS_SOURCES:
         try:
-            # URL dan [ ] qavslarini tozalash (ehtiyot uchun)
             url = source["url"].strip().strip("[]")
-            feed = feedparser.parse(url)
-            count = 0
-            for entry in feed.entries[:8]:
-                title = entry.get("title", "").strip()
-                link = entry.get("link", "").strip()
-                summary = entry.get("summary", entry.get("description", "")).strip()
-                if title and link:
-                    all_news.append({
-                        "title": title,
-                        "link": link,
-                        "summary": summary[:600] if summary else "",
-                        "source": source["name"],
-                        "hash": get_news_hash(title)
-                    })
-                    count += 1
-            print(f"OK {source['name']}: {count} ta")
+            
+            # feedparser o'rniga avval requests orqali brauzer nomidan yuklab olamiz
+            response = requests.get(url, headers=headers, timeout=15)
+            
+            if response.status_code == 200:
+                feed = feedparser.parse(response.content)
+                count = 0
+                for entry in feed.entries[:8]:
+                    title = entry.get("title", "").strip()
+                    link = entry.get("link", "").strip()
+                    summary = entry.get("summary", entry.get("description", "")).strip()
+                    if title and link:
+                        all_news.append({
+                            "title": title,
+                            "link": link,
+                            "summary": summary[:600] if summary else "",
+                            "source": source["name"],
+                            "hash": get_news_hash(title)
+                        })
+                        count += 1
+                print(f"OK {source['name']}: {count} ta")
+            else:
+                print(f"XATO {source['name']}: HTTP {response.status_code}")
+                
         except Exception as e:
             print(f"XATO {source['name']}: {e}")
     return all_news
@@ -114,13 +128,25 @@ Javob:"""
             contents=prompt
         )
         raw = response.text.strip()
-        # Markdown tozalash
-        raw = raw.replace("```", "").replace("**", "").replace("*", "").replace("#", "").strip()
+        
+        # Har qanday kutilmagan markdown va html kod bloklarini tozalash
+        raw = raw.replace("```html", "").replace("```", "")
+        raw = raw.replace("**", "").replace("*", "").replace("#", "").strip()
+        
         lines = [line.strip() for line in raw.split("\n") if line.strip()]
-        title_uz = lines[0] if lines else ""
+        
+        # Agar tasodifan 'html' so'zi birinchi qatorda qolib ketgan bo'lsa
+        if lines and lines[0].lower() == 'html':
+            lines.pop(0)
+            
+        if not lines:
+            return None
+            
+        title_uz = lines[0]
         desc_uz = " ".join(lines[1:]) if len(lines) > 1 else ""
+        
         result = f"{title_uz}\n{desc_uz}" if desc_uz else title_uz
-        print(f"Gemini OK: {result[:80]}")
+        print(f"Gemini OK: {title_uz[:50]}...")
         return result
     except Exception as e:
         print(f"Gemini XATO: {type(e).__name__}: {e}")
@@ -128,19 +154,27 @@ Javob:"""
 
 def send_to_telegram(text, sources, links):
     lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
-    title = escape_html(lines[0]) if lines else "Yangilik"
+    if not lines:
+        return False
+
+    title = escape_html(lines[0])
     description = escape_html(" ".join(lines[1:])) if len(lines) > 1 else ""
     sources_text = "\n".join([f"• {escape_html(s)}" for s in sources])
-    main_link = links[0] if links else ""
+    
+    # Havola ichidagi maxsus belgilarni ham HTML xavfsiz qilamiz
+    main_link = escape_html(links[0]) if links else ""
 
     message = f"<b>{title}</b>"
     if description:
         message += f"\n\n{description}"
     message += f"\n\n🔗 <b>Manba:</b>\n{sources_text}"
-    message += f"\n\n<a href=\"{main_link}\">Batafsil o'qish →</a>"
+    
+    if main_link:
+        message += f"\n\n<a href=\"{main_link}\">Batafsil o'qish →</a>"
+        
     message += f"\n\n─────────────────\n🚀 <i>FutureX AI News | @futurex_1984</i>"
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHANNEL_ID,
         "text": message,
@@ -150,7 +184,7 @@ def send_to_telegram(text, sources, links):
     try:
         resp = requests.post(url, json=payload, timeout=15)
         if resp.status_code == 200:
-            print(f"Telegram OK: {title[:50]}")
+            print(f"Telegram OK: {title[:40]}...")
             return True
         else:
             print(f"Telegram XATO {resp.status_code}: {resp.text[:200]}")
