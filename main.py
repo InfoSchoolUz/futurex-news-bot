@@ -19,16 +19,15 @@ TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 # AI VA TEXNOLOGIYA RSS MANBALAR
 # ============================================================
 RSS_SOURCES = [
-    {"name": "TechCrunch AI",        "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/"},
-    {"name": "The Verge AI",          "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
-    {"name": "VentureBeat AI",        "url": "https://venturebeat.com/category/ai/feed/"},
-    {"name": "Wired AI",              "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
-    {"name": "DeepMind Blog",         "url": "https://deepmind.google/blog/rss.xml"},
-    {"name": "OpenAI Blog",           "url": "https://openai.com/blog/rss.xml"},
-    {"name": "IEEE Spectrum AI",      "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
-    {"name": "Robotics Business Review", "url": "https://www.roboticsbusinessreview.com/feed/"},
-    {"name": "Robot Report",          "url": "https://www.therobotreport.com/feed/"},
+    {"name": "TechCrunch AI",            "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+    {"name": "MIT Technology Review",     "url": "https://www.technologyreview.com/feed/"},
+    {"name": "The Verge AI",              "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
+    {"name": "VentureBeat AI",            "url": "https://venturebeat.com/category/ai/feed/"},
+    {"name": "Wired AI",                  "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
+    {"name": "DeepMind Blog",             "url": "https://deepmind.google/blog/rss.xml"},
+    {"name": "IEEE Spectrum AI",          "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
+    {"name": "Robotics Business Review",  "url": "https://www.roboticsbusinessreview.com/feed/"},
+    {"name": "The Robot Report",          "url": "https://www.therobotreport.com/feed/"},
 ]
 
 SENT_NEWS_FILE = "sent_news.json"
@@ -104,7 +103,7 @@ def group_similar_news(news_list):
     return groups
 
 # ============================================================
-# GEMINI AI BILAN XULOSA YARATISH
+# GEMINI AI BILAN XULOSA YARATISH (O'ZBEKCHA)
 # ============================================================
 def generate_summary_with_gemini(news_group):
     genai.configure(api_key=GEMINI_API_KEY)
@@ -114,29 +113,33 @@ def generate_summary_with_gemini(news_group):
     summaries = [n["summary"] for n in news_group if n["summary"]]
     sources = list(set([n["source"] for n in news_group]))
 
-    prompt = f"""Siz AI va robotika yangiliklari bo'yicha mutaxassissiz.
-Quyidagi inglizcha yangilikni o'zbek tiliga tarjima qiling va qisqa xulosa yozing.
+    prompt = f"""Sen o'zbek tilidagi AI yangiliklari jurnalistisan.
+Quyidagi inglizcha yangilikni O'ZBEK TILIDA (lotin alifbosida) yozib ber.
 
-Sarlavha(lar):
-{chr(10).join(f'- {t}' for t in titles[:3])}
+INGLIZCHA SARLAVHA: {titles[0]}
+INGLIZCHA MAZMUN: {summaries[0][:400] if summaries else 'Mavjud emas'}
 
-Qo'shimcha ma'lumot:
-{chr(10).join(f'- {s[:300]}' for s in summaries[:2])}
+MUHIM QOIDALAR:
+- Hamma narsani O'ZBEK TILIDA yoz, birorta inglizcha so'z qoldirma
+- Birinchi qatorda: tegishli emoji + o'zbekcha sarlavha
+- Ikkinchi qatorda: 2-3 jumlali o'zbekcha tushuntirish
+- Oddiy, tushunarli til ishlat
+- Texnik atamalarni ham o'zbekchalashtir yoki tushuntir
 
-Qoidalar:
-1. O'zbek tilida yozing (lotin alifbosida)
-2. Birinchi qatorda - o'zbekcha sarlavha (emoji bilan boshlang)
-3. Ikkinchi qatorda - 2-3 jumlali qisqa tushuntirish
-4. Oddiy, tushunarli til ishlating
-5. Faqat sarlavha va tushuntirishni yozing, boshqa hech narsa yozma
-
-Misol format:
-🤖 OpenAI yangi GPT-5 modelini taqdim etdi
-Bu model oldingi versiyaga nisbatan 3 marta tezroq ishlaydi va ko'proq tillarni qo'llab-quvvatlaydi. Yangi model ayniqsa matematika va dasturlash sohasida kuchli natijalarga erishdi."""
+JAVOB FORMATI (faqat shu ikki qator):
+[emoji] [O'zbekcha sarlavha]
+[O'zbekcha tushuntirish 2-3 jumla]"""
 
     try:
         response = model.generate_content(prompt)
-        return response.text.strip(), sources
+        text = response.text.strip()
+        # Agar hali ham inglizcha bo'lsa, qayta urinish
+        if any(word in text.lower() for word in ["the ", "and ", "of ", "is ", "are "]):
+            response2 = model.generate_content(
+                f"Quyidagi matnni to'liq O'zbek tiliga (lotin alifbosi) tarjima qil, hech qanday inglizcha so'z qoldirma:\n\n{text}"
+            )
+            text = response2.text.strip()
+        return text, sources
     except Exception as e:
         print(f"Gemini xatolik: {e}")
         return f"🤖 {titles[0]}", sources
@@ -146,7 +149,7 @@ Bu model oldingi versiyaga nisbatan 3 marta tezroq ishlaydi va ko'proq tillarni 
 # ============================================================
 def send_to_telegram(summary, sources, links):
     lines = summary.strip().split("\n", 1)
-    title = lines[0] if lines else summary
+    title = lines[0].strip() if lines else summary
     description = lines[1].strip() if len(lines) > 1 else ""
 
     sources_text = "\n".join([f"• {s}" for s in sources])
@@ -211,15 +214,12 @@ def main():
         print("❌ TELEGRAM_BOT_TOKEN topilmadi!")
         return
 
-    # Yuborilgan yangiliklar
     sent_news = load_sent_news()
     sent_hashes = set(sent_news)
 
-    # Barcha manbalardan yangilik olish
     all_news = fetch_all_news()
     print(f"\n📊 Jami {len(all_news)} ta yangilik olindi")
 
-    # Yangi yangiliklar
     new_news = [n for n in all_news if n["hash"] not in sent_hashes]
     print(f"🆕 {len(new_news)} ta yangi yangilik\n")
 
@@ -227,14 +227,13 @@ def main():
         print("ℹ️ Yangi yangilik yo'q — keyingi tekshiruvda ko'ramiz!")
         return
 
-    # Bir xil yangiliklarni birlashtirish
     groups = group_similar_news(new_news)
     print(f"📦 {len(groups)} ta guruh\n")
 
     sent_count = 0
     new_hashes = []
 
-    for group in groups[:8]:  # Bir safar max 8 ta
+    for group in groups[:8]:
         try:
             summary, sources = generate_summary_with_gemini(group)
             links = [n["link"] for n in group]
@@ -243,12 +242,11 @@ def main():
                 for n in group:
                     new_hashes.append(n["hash"])
                 sent_count += 1
-                time.sleep(4)  # Spam oldini olish
+                time.sleep(4)
         except Exception as e:
             print(f"❌ Xatolik: {e}")
             continue
 
-    # Saqlash
     updated = list(sent_hashes) + new_hashes
     save_sent_news(updated)
     print(f"\n{'='*55}")
