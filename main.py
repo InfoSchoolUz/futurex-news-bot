@@ -8,16 +8,10 @@ import time
 from datetime import datetime
 from difflib import SequenceMatcher
 
-# ============================================================
-# SOZLAMALAR
-# ============================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
-# ============================================================
-# AI VA TEXNOLOGIYA RSS MANBALAR
-# ============================================================
 RSS_SOURCES = [
     {"name": "TechCrunch AI",            "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
     {"name": "MIT Technology Review",     "url": "https://www.technologyreview.com/feed/"},
@@ -26,16 +20,12 @@ RSS_SOURCES = [
     {"name": "Wired AI",                  "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
     {"name": "DeepMind Blog",             "url": "https://deepmind.google/blog/rss.xml"},
     {"name": "IEEE Spectrum AI",          "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
-    {"name": "Robotics Business Review",  "url": "https://www.roboticsbusinessreview.com/feed/"},
     {"name": "The Robot Report",          "url": "https://www.therobotreport.com/feed/"},
 ]
 
 SENT_NEWS_FILE = "sent_news.json"
 SIMILARITY_THRESHOLD = 0.65
 
-# ============================================================
-# YUBORILGAN YANGILIKLAR
-# ============================================================
 def load_sent_news():
     if os.path.exists(SENT_NEWS_FILE):
         try:
@@ -55,9 +45,6 @@ def get_news_hash(title):
 def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
-# ============================================================
-# RSS DAN YANGILIKLAR O'QISH
-# ============================================================
 def fetch_all_news():
     all_news = []
     for source in RSS_SOURCES:
@@ -77,14 +64,11 @@ def fetch_all_news():
                         "hash": get_news_hash(title)
                     })
                     count += 1
-            print(f"✅ {source['name']}: {count} ta yangilik olindi")
+            print(f"OK {source['name']}: {count} ta")
         except Exception as e:
-            print(f"❌ {source['name']} xatolik: {e}")
+            print(f"XATO {source['name']}: {e}")
     return all_news
 
-# ============================================================
-# BIR XIL YANGILIKLARNI BIRLASHTIRISH
-# ============================================================
 def group_similar_news(news_list):
     groups = []
     used = set()
@@ -102,81 +86,45 @@ def group_similar_news(news_list):
         groups.append(group)
     return groups
 
-# ============================================================
-# GEMINI AI BILAN XULOSA YARATISH (O'ZBEKCHA)
-# ============================================================
-def generate_summary_with_gemini(news_group):
+def translate_with_gemini(title, summary):
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
-    titles = [n["title"] for n in news_group]
-    summaries = [n["summary"] for n in news_group if n["summary"]]
-    sources = list(set([n["source"] for n in news_group]))
+    prompt = f"""Vazifa: Quyidagi inglizcha AI/texnologiya yangiligini O'zbek tiliga tarjima qil.
 
-    prompt = f"""Sen o'zbek tilidagi AI yangiliklari jurnalistisan.
-Quyidagi inglizcha yangilikni O'ZBEK TILIDA (lotin alifbosida) yozib ber.
+Sarlavha: {title}
+Mazmun: {summary[:400] if summary else ''}
 
-INGLIZCHA SARLAVHA: {titles[0]}
-INGLIZCHA MAZMUN: {summaries[0][:400] if summaries else 'Mavjud emas'}
+Qoidalar:
+1. FAQAT o'zbek tilida yoz (lotin alifbosi)
+2. Birinchi qatorda emoji va qisqa sarlavha
+3. Ikkinchi qatorda 2 jumlali tushuntirish
+4. Texnik so'zlarni: AI=AI, robot=robot, model=model deb yoz
 
-MUHIM QOIDALAR:
-- Hamma narsani O'ZBEK TILIDA yoz, birorta inglizcha so'z qoldirma
-- Birinchi qatorda: tegishli emoji + o'zbekcha sarlavha
-- Ikkinchi qatorda: 2-3 jumlali o'zbekcha tushuntirish
-- Oddiy, tushunarli til ishlat
-- Texnik atamalarni ham o'zbekchalashtir yoki tushuntir
-
-JAVOB FORMATI (faqat shu ikki qator):
-[emoji] [O'zbekcha sarlavha]
-[O'zbekcha tushuntirish 2-3 jumla]"""
+Javob (faqat 2 qator):"""
 
     try:
         response = model.generate_content(prompt)
-        text = response.text.strip()
-        # Agar hali ham inglizcha bo'lsa, qayta urinish
-        if any(word in text.lower() for word in ["the ", "and ", "of ", "is ", "are "]):
-            response2 = model.generate_content(
-                f"Quyidagi matnni to'liq O'zbek tiliga (lotin alifbosi) tarjima qil, hech qanday inglizcha so'z qoldirma:\n\n{text}"
-            )
-            text = response2.text.strip()
-        return text, sources
+        result = response.text.strip()
+        print(f"Gemini OK: {result[:80]}")
+        return result
     except Exception as e:
-        print(f"Gemini xatolik: {e}")
-        return f"🤖 {titles[0]}", sources
+        print(f"Gemini XATO: {type(e).__name__}: {e}")
+        return None
 
-# ============================================================
-# TELEGRAM GA XABAR YUBORISH
-# ============================================================
-def send_to_telegram(summary, sources, links):
-    lines = summary.strip().split("\n", 1)
-    title = lines[0].strip() if lines else summary
+def send_to_telegram(text, sources, links):
+    lines = text.strip().split("\n", 1)
+    title = lines[0].strip()
     description = lines[1].strip() if len(lines) > 1 else ""
-
     sources_text = "\n".join([f"• {s}" for s in sources])
     main_link = links[0] if links else ""
 
+    message = f"<b>{title}</b>"
     if description:
-        message = f"""<b>{title}</b>
-
-{description}
-
-🔗 <b>Manba:</b>
-{sources_text}
-
-<a href="{main_link}">Batafsil o'qish →</a>
-
-─────────────────
-🚀 <i>FutureX AI News | @futurex_1984</i>"""
-    else:
-        message = f"""<b>{title}</b>
-
-🔗 <b>Manba:</b>
-{sources_text}
-
-<a href="{main_link}">Batafsil o'qish →</a>
-
-─────────────────
-🚀 <i>FutureX AI News | @futurex_1984</i>"""
+        message += f"\n\n{description}"
+    message += f"\n\n🔗 <b>Manba:</b>\n{sources_text}"
+    message += f"\n\n<a href=\"{main_link}\">Batafsil o'qish →</a>"
+    message += f"\n\n─────────────────\n🚀 <i>FutureX AI News | @futurex_1984</i>"
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -185,73 +133,80 @@ def send_to_telegram(summary, sources, links):
         "parse_mode": "HTML",
         "disable_web_page_preview": False
     }
-
     try:
-        response = requests.post(url, json=payload, timeout=15)
-        if response.status_code == 200:
-            print(f"✅ Yuborildi: {title[:60]}...")
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            print(f"Telegram OK: {title[:50]}")
             return True
         else:
-            print(f"❌ Telegram xatolik ({response.status_code}): {response.text}")
+            print(f"Telegram XATO: {resp.status_code} - {resp.text[:200]}")
             return False
     except Exception as e:
-        print(f"❌ Yuborishda xatolik: {e}")
+        print(f"Telegram XATO: {e}")
         return False
 
-# ============================================================
-# ASOSIY FUNKSIYA
-# ============================================================
 def main():
-    print(f"\n{'='*55}")
-    print(f"🚀 FutureX AI News Aggregator")
-    print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*55}\n")
+    print(f"\n{'='*50}")
+    print(f"FutureX AI News Aggregator")
+    print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*50}\n")
 
     if not GEMINI_API_KEY:
-        print("❌ GEMINI_API_KEY topilmadi!")
+        print("XATO: GEMINI_API_KEY yo'q!")
         return
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN topilmadi!")
+        print("XATO: TELEGRAM_BOT_TOKEN yo'q!")
         return
 
     sent_news = load_sent_news()
     sent_hashes = set(sent_news)
 
     all_news = fetch_all_news()
-    print(f"\n📊 Jami {len(all_news)} ta yangilik olindi")
+    print(f"\nJami {len(all_news)} ta yangilik")
 
     new_news = [n for n in all_news if n["hash"] not in sent_hashes]
-    print(f"🆕 {len(new_news)} ta yangi yangilik\n")
+    print(f"Yangi: {len(new_news)} ta\n")
 
     if not new_news:
-        print("ℹ️ Yangi yangilik yo'q — keyingi tekshiruvda ko'ramiz!")
+        print("Yangi yangilik yo'q")
         return
 
     groups = group_similar_news(new_news)
-    print(f"📦 {len(groups)} ta guruh\n")
+    print(f"Guruhlar: {len(groups)} ta\n")
 
     sent_count = 0
     new_hashes = []
 
     for group in groups[:8]:
         try:
-            summary, sources = generate_summary_with_gemini(group)
+            title = group[0]["title"]
+            summary = group[0]["summary"]
+            sources = list(set([n["source"] for n in group]))
             links = [n["link"] for n in group]
 
-            if send_to_telegram(summary, sources, links):
+            # Gemini bilan tarjima
+            translated = translate_with_gemini(title, summary)
+
+            if not translated:
+                # Gemini ishlamasa o'tkazib yuborish
+                print(f"O'tkazildi: {title[:50]}")
+                continue
+
+            if send_to_telegram(translated, sources, links):
                 for n in group:
                     new_hashes.append(n["hash"])
                 sent_count += 1
                 time.sleep(4)
+
         except Exception as e:
-            print(f"❌ Xatolik: {e}")
+            print(f"Xatolik: {e}")
             continue
 
     updated = list(sent_hashes) + new_hashes
     save_sent_news(updated)
-    print(f"\n{'='*55}")
-    print(f"✅ {sent_count} ta yangilik @futurex_1984 ga yuborildi!")
-    print(f"{'='*55}\n")
+    print(f"\n{'='*50}")
+    print(f"Natija: {sent_count} ta yangilik yuborildi!")
+    print(f"{'='*50}\n")
 
 if __name__ == "__main__":
     main()
