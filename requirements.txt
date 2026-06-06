@@ -1,4 +1,3 @@
-feedparser
-google-generativeai
-requests
-rapidfuzz
+feedparser==6.0.12
+google-genai
+requests==2.34.2
