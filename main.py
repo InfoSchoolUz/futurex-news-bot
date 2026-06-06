@@ -13,14 +13,14 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
 RSS_SOURCES = [
-    {"name": "TechCrunch AI",            "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "MIT Technology Review",     "url": "https://www.technologyreview.com/feed/"},
-    {"name": "The Verge AI",              "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
-    {"name": "VentureBeat AI",            "url": "https://venturebeat.com/category/ai/feed/"},
-    {"name": "Wired AI",                  "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
-    {"name": "DeepMind Blog",             "url": "https://deepmind.google/blog/rss.xml"},
-    {"name": "IEEE Spectrum AI",          "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
-    {"name": "The Robot Report",          "url": "https://www.therobotreport.com/feed/"},
+    {"name": "TechCrunch AI",        "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+    {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/"},
+    {"name": "The Verge AI",          "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
+    {"name": "VentureBeat AI",        "url": "https://venturebeat.com/category/ai/feed/"},
+    {"name": "Wired AI",              "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
+    {"name": "DeepMind Blog",         "url": "https://deepmind.google/blog/rss.xml"},
+    {"name": "IEEE Spectrum AI",      "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
+    {"name": "The Robot Report",      "url": "https://www.therobotreport.com/feed/"},
 ]
 
 SENT_NEWS_FILE = "sent_news.json"
@@ -45,11 +45,16 @@ def get_news_hash(title):
 def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
+# FIX C: HTML maxsus belgilarini tozalash
+def escape_html(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 def fetch_all_news():
     all_news = []
     for source in RSS_SOURCES:
         try:
-            feed = feedparser.parse(source["url"])
+            # FIX B: feedparser uchun timeout
+            feed = feedparser.parse(source["url"], request_headers={"User-Agent": "Mozilla/5.0"})
             count = 0
             for entry in feed.entries[:8]:
                 title = entry.get("title", "").strip()
@@ -90,6 +95,7 @@ def translate_with_gemini(title, summary):
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-1.5-flash")
 
+    # FIX A: Markdown va HTML belgilarini chiqarmaslikni so'rash
     prompt = f"""Vazifa: Quyidagi inglizcha AI/texnologiya yangiligini O'zbek tiliga tarjima qil.
 
 Sarlavha: {title}
@@ -97,26 +103,42 @@ Mazmun: {summary[:400] if summary else ''}
 
 Qoidalar:
 1. FAQAT o'zbek tilida yoz (lotin alifbosi)
-2. Birinchi qatorda emoji va qisqa sarlavha
-3. Ikkinchi qatorda 2 jumlali tushuntirish
-4. Texnik so'zlarni: AI=AI, robot=robot, model=model deb yoz
+2. Birinchi qatorda: emoji + qisqa sarlavha
+3. Ikkinchi qatorda: 2 jumlali tushuntirish
+4. Hech qanday markdown (**, *, ```) yoki HTML teglari ishlatma
+5. Hech qanday kirish so'z yoki tushuntirish yozma
+6. Faqat 2 qator yoz, boshqa hech narsa yo'q
 
-Javob (faqat 2 qator):"""
+Javob:"""
 
     try:
         response = model.generate_content(prompt)
-        result = response.text.strip()
+        raw = response.text.strip()
+
+        # Markdown va kod bloklarini tozalash
+        raw = raw.replace("```", "").replace("**", "").replace("*", "").replace("#", "")
+        raw = raw.strip()
+
+        # FIX A: Bo'sh qatorlarni olib, faqat mazmunli qatorlarni olish
+        lines = [line.strip() for line in raw.split("\n") if line.strip()]
+        title_uz = lines[0] if lines else ""
+        desc_uz = " ".join(lines[1:]) if len(lines) > 1 else ""
+
+        result = f"{title_uz}\n{desc_uz}" if desc_uz else title_uz
         print(f"Gemini OK: {result[:80]}")
         return result
+
     except Exception as e:
         print(f"Gemini XATO: {type(e).__name__}: {e}")
         return None
 
 def send_to_telegram(text, sources, links):
-    lines = text.strip().split("\n", 1)
-    title = lines[0].strip()
-    description = lines[1].strip() if len(lines) > 1 else ""
-    sources_text = "\n".join([f"• {s}" for s in sources])
+    # FIX A: Xavfsiz HTML parsing
+    lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
+    title = escape_html(lines[0]) if lines else "Yangilik"
+    description = escape_html(" ".join(lines[1:])) if len(lines) > 1 else ""
+
+    sources_text = "\n".join([f"• {escape_html(s)}" for s in sources])
     main_link = links[0] if links else ""
 
     message = f"<b>{title}</b>"
@@ -139,7 +161,7 @@ def send_to_telegram(text, sources, links):
             print(f"Telegram OK: {title[:50]}")
             return True
         else:
-            print(f"Telegram XATO: {resp.status_code} - {resp.text[:200]}")
+            print(f"Telegram XATO {resp.status_code}: {resp.text[:200]}")
             return False
     except Exception as e:
         print(f"Telegram XATO: {e}")
@@ -184,11 +206,9 @@ def main():
             sources = list(set([n["source"] for n in group]))
             links = [n["link"] for n in group]
 
-            # Gemini bilan tarjima
             translated = translate_with_gemini(title, summary)
 
             if not translated:
-                # Gemini ishlamasa o'tkazib yuborish
                 print(f"O'tkazildi: {title[:50]}")
                 continue
 
@@ -202,8 +222,10 @@ def main():
             print(f"Xatolik: {e}")
             continue
 
-    updated = list(sent_hashes) + new_hashes
+    # FIX C: Ro'yxat hajmini nazorat qilish
+    updated = (list(sent_hashes) + new_hashes)[-500:]
     save_sent_news(updated)
+
     print(f"\n{'='*50}")
     print(f"Natija: {sent_count} ta yangilik yuborildi!")
     print(f"{'='*50}\n")
