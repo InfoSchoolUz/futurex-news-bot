@@ -13,14 +13,14 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "@futurex_1984")
 
 RSS_SOURCES = [
-    {"name": "TechCrunch AI",        "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
-    {"name": "MIT Technology Review", "url": "https://www.technologyreview.com/feed/"},
-    {"name": "The Verge AI",          "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
-    {"name": "VentureBeat AI",        "url": "https://venturebeat.com/category/ai/feed/"},
-    {"name": "Wired AI",              "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
-    {"name": "DeepMind Blog",         "url": "https://deepmind.google/blog/rss.xml"},
-    {"name": "IEEE Spectrum AI",      "url": "https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss"},
-    {"name": "The Robot Report",      "url": "https://www.therobotreport.com/feed/"},
+    {"name": "TechCrunch AI",        "url": "[https://techcrunch.com/category/artificial-intelligence/feed/](https://techcrunch.com/category/artificial-intelligence/feed/)"},
+    {"name": "MIT Technology Review", "url": "[https://www.technologyreview.com/feed/](https://www.technologyreview.com/feed/)"},
+    {"name": "The Verge AI",          "url": "[https://www.theverge.com/ai-artificial-intelligence/rss/index.xml](https://www.theverge.com/ai-artificial-intelligence/rss/index.xml)"},
+    {"name": "VentureBeat AI",        "url": "[https://venturebeat.com/category/ai/feed/](https://venturebeat.com/category/ai/feed/)"},
+    {"name": "Wired AI",              "url": "[https://www.wired.com/feed/tag/ai/latest/rss](https://www.wired.com/feed/tag/ai/latest/rss)"},
+    {"name": "DeepMind Blog",         "url": "[https://deepmind.google/blog/rss.xml](https://deepmind.google/blog/rss.xml)"},
+    {"name": "IEEE Spectrum AI",      "url": "[https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss](https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss)"},
+    {"name": "The Robot Report",      "url": "[https://www.therobotreport.com/feed/](https://www.therobotreport.com/feed/)"},
 ]
 
 SENT_NEWS_FILE = "sent_news.json"
@@ -45,16 +45,22 @@ def get_news_hash(title):
 def is_similar(title1, title2):
     return SequenceMatcher(None, title1.lower(), title2.lower()).ratio() > SIMILARITY_THRESHOLD
 
-# FIX C: HTML maxsus belgilarini tozalash
 def escape_html(text):
+    if not text:
+        return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def fetch_all_news():
     all_news = []
     for source in RSS_SOURCES:
         try:
-            # FIX B: feedparser uchun timeout
-            feed = feedparser.parse(source["url"], request_headers={"User-Agent": "Mozilla/5.0"})
+            # FIX: Kuchaytirilgan tarmoq so'rovi (Timeout bilan)
+            resp = requests.get(source["url"], headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            if resp.status_code != 200:
+                print(f"XATO {source['name']}: HTTP {resp.status_code}")
+                continue
+                
+            feed = feedparser.parse(resp.content)
             count = 0
             for entry in feed.entries[:8]:
                 title = entry.get("title", "").strip()
@@ -95,7 +101,6 @@ def translate_with_gemini(title, summary):
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-1.5-flash")
 
-    # FIX A: Markdown va HTML belgilarini chiqarmaslikni so'rash
     prompt = f"""Vazifa: Quyidagi inglizcha AI/texnologiya yangiligini O'zbek tiliga tarjima qil.
 
 Sarlavha: {title}
@@ -115,17 +120,26 @@ Javob:"""
         response = model.generate_content(prompt)
         raw = response.text.strip()
 
-        # Markdown va kod bloklarini tozalash
-        raw = raw.replace("```", "").replace("**", "").replace("*", "").replace("#", "")
+        # FIX A: Gemini markdown bloklarini tubdan tozalash (html so'zini ham yo'qotamiz)
+        raw = raw.replace("```html", "").replace("```", "")
+        raw = raw.replace("**", "").replace("*", "").replace("#", "")
         raw = raw.strip()
 
-        # FIX A: Bo'sh qatorlarni olib, faqat mazmunli qatorlarni olish
+        # Bo'sh qatorlarni tashlab ketish
         lines = [line.strip() for line in raw.split("\n") if line.strip()]
-        title_uz = lines[0] if lines else ""
+        
+        # Agar tasodifan 'html' so'zi birinchi qatorda qolib ketgan bo'lsa, uni o'chirish
+        if lines and lines[0].lower() == 'html':
+            lines.pop(0)
+
+        if not lines:
+            return None
+
+        title_uz = lines[0]
         desc_uz = " ".join(lines[1:]) if len(lines) > 1 else ""
 
         result = f"{title_uz}\n{desc_uz}" if desc_uz else title_uz
-        print(f"Gemini OK: {result[:80]}")
+        print(f"Gemini OK: {title_uz[:50]}...")
         return result
 
     except Exception as e:
@@ -133,19 +147,26 @@ Javob:"""
         return None
 
 def send_to_telegram(text, sources, links):
-    # FIX A: Xavfsiz HTML parsing
     lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
-    title = escape_html(lines[0]) if lines else "Yangilik"
+    if not lines:
+        return False
+
+    title = escape_html(lines[0])
     description = escape_html(" ".join(lines[1:])) if len(lines) > 1 else ""
 
     sources_text = "\n".join([f"• {escape_html(s)}" for s in sources])
-    main_link = links[0] if links else ""
+    
+    # FIX B: Link tarkibidagi maxsus belgilarni HTML xavfsiz qilish
+    main_link = escape_html(links[0]) if links else ""
 
     message = f"<b>{title}</b>"
     if description:
         message += f"\n\n{description}"
     message += f"\n\n🔗 <b>Manba:</b>\n{sources_text}"
-    message += f"\n\n<a href=\"{main_link}\">Batafsil o'qish →</a>"
+    
+    if main_link:
+        message += f"\n\n<a href=\"{main_link}\">Batafsil o'qish →</a>"
+        
     message += f"\n\n─────────────────\n🚀 <i>FutureX AI News | @futurex_1984</i>"
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -158,10 +179,11 @@ def send_to_telegram(text, sources, links):
     try:
         resp = requests.post(url, json=payload, timeout=15)
         if resp.status_code == 200:
-            print(f"Telegram OK: {title[:50]}")
+            print(f"Telegram OK: {title[:40]}...")
             return True
         else:
-            print(f"Telegram XATO {resp.status_code}: {resp.text[:200]}")
+            # Agar xatolik bo'lsa aynan Telegram nima deganini ko'rsatadi
+            print(f"Telegram XATO {resp.status_code}: {resp.text}")
             return False
     except Exception as e:
         print(f"Telegram XATO: {e}")
@@ -222,7 +244,6 @@ def main():
             print(f"Xatolik: {e}")
             continue
 
-    # FIX C: Ro'yxat hajmini nazorat qilish
     updated = (list(sent_hashes) + new_hashes)[-500:]
     save_sent_news(updated)
 
